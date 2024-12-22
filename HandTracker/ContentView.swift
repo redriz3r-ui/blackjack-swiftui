@@ -1,997 +1,670 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Game Models
-
-enum Suit: String, CaseIterable {
-    case hearts, diamonds, clubs, spades
+func padCardLine(_ line: String, width: Int = 9) -> String {
+    return line.padding(toLength: width, withPad: " ", startingAt: 0)
 }
 
-struct Card: Equatable {
-    let rank: Int
-    let suit: Suit
-    
-    var value: Int {
-        let val = rank > 10 ? 10 : rank
-        print("Card value calculated: \(val) for rank \(rank)")
-        return val
-    }
-    
-    var description: String {
-        let rankString: String
-        switch rank {
-        case 1: rankString = "Ace"
-        case 11: rankString = "Jack"
-        case 12: rankString = "Queen"
-        case 13: rankString = "King"
-        default: rankString = "\(rank)"
-        }
-        print("Card description generated: \(rankString) of \(suit.rawValue.capitalized)")
-        return "\(rankString) of \(suit.rawValue.capitalized)"
-    }
-    
-    // Hi-Lo Card Counting Value
-    var hiLoValue: Int {
-        let val = {
-            switch rank {
-            case 2...6: return +1
-            case 7...9: return 0
-            default: return -1
-            }
-        }()
-        print("Card Hi-Lo value: \(val) for rank \(rank)")
-        return val
-    }
-}
-
-// MARK: - Deck
-
-class Deck {
-    var cards: [Card] = []
-    var cardComposition: [Int: Int] = [:] // Key: Rank, Value: Count
-
-    init(decks: Int = 1) {
-        print("Initializing deck with \(decks) deck(s)")
-        for _ in 0..<decks {
-            for suit in Suit.allCases {
-                for rank in 1...13 {
-                    let card = Card(rank: rank, suit: suit)
-                    cards.append(card)
-                    cardComposition[rank, default: 0] += 1
-                }
-            }
-        }
-        shuffle()
-    }
-
-    func shuffle() {
-        print("Shuffling deck")
-        for i in stride(from: cards.count - 1, through: 1, by: -1) {
-            let randomIndex = Int.random(in: 0...i)
-            cards.swapAt(i, randomIndex)
-        }
-        resetCardComposition()
-    }
-    
-    func reshuffleDeck() {
-        print("Reshuffling deck...")
-        cards.removeAll()
-        for suit in Suit.allCases {
-            for rank in 1...13 {
-                let card = Card(rank: rank, suit: suit)
-                cards.append(card)
-            }
-        }
-        shuffle()
-    }
-
-    func dealCard() -> Card? {
-        if cards.isEmpty {
-            print("Deck is empty. Automatically reshuffling...")
-            reshuffleDeck()
-        }
-
-        guard !cards.isEmpty else {
-            print("Error: Deck is still empty after reshuffling.")
-            return nil
-        }
-
-        let card = cards.removeLast()
-        cardComposition[card.rank, default: 0] -= 1
-        print("Dealt card: \(card.description)")
-        return card
-    }
-
-    func resetCardComposition() {
-        print("Resetting card composition")
-        cardComposition = [:]
-        for card in cards {
-            cardComposition[card.rank, default: 0] += 1
-        }
-    }
-
-    func getCardComposition() -> [Int: Int] {
-        print("Returning current card composition")
-        return cardComposition
-    }
-
-    var remainingDecks: Double {
-        let decks = Double(cards.count) / 52.0
-        print("Remaining decks calculated: \(decks)")
-        return decks
-    }
-}
-
-// MARK: - Game State
-
-enum GameState: String {
-    case waitingForBet = "Waiting for Bet"
-    case playerTurn = "Player's Turn"
-    case dealerTurn = "Dealer's Turn"
-    case gameOver = "Game Over"
-}
-
-// MARK: - Blackjack Game
-
-struct BlackjackGame {
-    var deck: Deck
-    var playerHand: [Card] = []
-    var dealerHand: [Card] = []
-    var state: GameState = .waitingForBet
-    var runningCount: Int = 0
-    var dealtCards: [Card] = [] // History of all dealt cards
-    // Properties to manage split hands
-    var playerSplitHands: [[Card]] = [] // Array of hands after a split
-    var currentHandIndex: Int = 0       // Index of the active hand
-    
-    var playerBalance: Int = 100 // Initial balance
-    var currentBet: Int = 0      // Current bet for the round
-
-    init(decks: Int = 1) {
-         print("Initializing BlackjackGame with \(decks) deck(s)")
-         self.deck = Deck(decks: decks)
-     }
-    
-    
-    func isSoftHand(_ hand: [Card]) -> Bool {
-        let total = calculateHandTotal(hand: hand)
-        let hasAce = hand.contains { $0.rank == 1 }
-        return hasAce && total <= 21 && total - 10 >= 11 // Contains an Ace valued as 11
-    }
-    
-    func strategyHint(for hand: [Card], dealerUpCard: Card?) -> String {
-        guard let dealerUpCard = dealerUpCard else { return "No hint available." }
-        let dealerValue = dealerUpCard.value
-        let total = calculateHandTotal(hand: hand)
-
-        if hand.count == 2, hand[0].rank == hand[1].rank { // Pair splitting
-            switch hand[0].rank {
-            case 1: return "Split Aces"
-            case 8: return "Split Eights"
-            case 9: return dealerValue == 7 || dealerValue >= 10 ? "Stand" : "Split"
-            case 10: return "Stand (Never Split Tens)"
-            default: return dealerValue >= 2 && dealerValue <= 7 ? "Split" : "Hit"
-            }
-        }
-
-        if isSoftHand(hand) { // Soft totals
-            switch total {
-            case 13...17: return dealerValue >= 7 ? "Hit" : "Double Down"
-            case 18: return dealerValue >= 9 ? "Hit" : (dealerValue >= 3 && dealerValue <= 6 ? "Double Down" : "Stand")
-            default: return "Stand"
-            }
-        } else { // Hard totals
-            switch total {
-            case 4...8: return "Hit"
-            case 9: return dealerValue >= 3 && dealerValue <= 6 ? "Double Down" : "Hit"
-            case 10: return dealerValue <= 9 ? "Double Down" : "Hit"
-            case 11: return "Double Down"
-            case 12: return dealerValue >= 4 && dealerValue <= 6 ? "Stand" : "Hit"
-            case 13...16: return dealerValue <= 6 ? "Stand" : "Hit"
-            default: return "Stand"
-            }
-        }
-    }
-    
-    static func basicStrategyTable() -> String {
-        let headers = ["Your Total", "Dealer 2-6", "Dealer 7-A"]
-        let rows = [
-            ["Hard 4-8", "Hit", "Hit"],
-            ["Hard 9", "Double Down", "Hit"],
-            ["Hard 10", "Double Down", "Hit"],
-            ["Hard 11", "Double Down", "Double Down"],
-            ["Hard 12", "Stand", "Hit"],
-            ["Hard 13-16", "Stand", "Hit"],
-            ["Hard 17+", "Stand", "Stand"],
-            ["Soft 13-17", "Hit", "Hit"],
-            ["Soft 18", "Stand/Double", "Hit"],
-            ["Soft 19+", "Stand", "Stand"],
-            ["Pair Aces/8s", "Split", "Split"],
-            ["Pair 9s", "Split/Stand", "Stand"],
-            ["Pair 10s", "Stand", "Stand"]
-        ]
-        return asciiTable(headers: headers, rows: rows)
-    }
-    
-    mutating func canTakeInsurance() -> Bool {
-        // Insurance is available if dealer's up card is an Ace
-        guard dealerHand.count == 2, dealerHand[1].rank == 1 else {
-            return false
-        }
-        return true
-    }
-    
-    
-    mutating func takeInsurance() {
-        guard canTakeInsurance() else {
-            print("Insurance is not available.")
-            return
-        }
-
-        let insuranceBet = currentBet / 2
-        guard playerBalance >= insuranceBet else {
-            print("Not enough balance to take insurance.")
-            return
-        }
-
-        print("Taking insurance...")
-        playerBalance -= insuranceBet
-        
-        
-
-        // Reveal dealer's hand and check for blackjack
-        let dealerTotal = calculateHandTotal(hand: dealerHand)
-        if dealerTotal == 21 {
-            print("Dealer has blackjack. Insurance pays out.")
-            playerBalance += insuranceBet * 3 // 2:1 payout + original bet back
-        } else {
-            print("Dealer does not have blackjack. Insurance lost.")
-        }
-    }
-    
-    mutating func canSplit() -> Bool {
-        guard playerHand.count == 2, // Ensure only two cards are in hand
-              playerHand[0].rank == playerHand[1].rank, // Both cards must have the same rank
-              playerBalance >= currentBet else { // Check if player has enough balance
-            print("Player cannot split.")
-            return false
-        }
-        return true
-    }
-    
-    mutating func canDoubleDown() -> Bool {
-        // Player can double down if they have exactly two cards and enough balance
-        return playerHand.count == 2 && playerBalance >= currentBet
-    }
-    
-    mutating func doubleDown() {
-        guard canDoubleDown() else {
-            print("Cannot double down.")
-            return
-        }
-
-        print("Doubling down...")
-        playerBalance -= currentBet
-        currentBet *= 2
-
-        // Deal one card
-        if let newCard = deck.dealCard() {
-            playerHand.append(newCard)
-            updateRunningCount(with: [newCard])
-            print("Player hand after doubling down: \(playerHand.map { $0.description })")
-        }
-
-        // Check hand total to proceed
-        if calculateHandTotal(hand: playerHand) > 21 {
-            print("Player busts after doubling down.")
-            resolveBet(won: false)
-            state = .gameOver
-        } else {
-            dealerTurn()
-        }
-    }
-    
-    mutating func doubleDownSplitHand() {
-        guard currentHandIndex < playerSplitHands.count,
-              playerSplitHands[currentHandIndex].count == 2,
-              playerBalance >= currentBet else {
-            print("Cannot double down on this hand.")
-            return
-        }
-
-        print("Doubling down on split hand \(currentHandIndex + 1)...")
-        playerBalance -= currentBet
-        currentBet *= 2
-
-        if let newCard = deck.dealCard() {
-            playerSplitHands[currentHandIndex].append(newCard)
-            updateRunningCount(with: [newCard])
-            print("Split hand \(currentHandIndex + 1) after doubling down: \(playerSplitHands[currentHandIndex].map { $0.description })")
-        }
-
-        moveToNextHand()
-    }
-    
-    mutating func splitHand() {
-        guard canSplit() else { return }
-
-        print("Splitting hand...")
-        // Create a new hand by splitting the player's cards
-        let newHand = [playerHand.removeLast()]
-        playerSplitHands = [playerHand, newHand]
-
-        // Deduct an additional bet
-        playerBalance -= currentBet
-
-        // Deal one card to each split hand
-        if let cardForFirstHand = deck.dealCard(),
-           let cardForSecondHand = deck.dealCard() {
-            playerSplitHands[0].append(cardForFirstHand)
-            playerSplitHands[1].append(cardForSecondHand)
-        }
-
-        // Start with the first hand
-        currentHandIndex = 0
-        playerHand = playerSplitHands[currentHandIndex]
-        state = .playerTurn
-
-        print("Player hands after split: \(playerSplitHands.map { $0.map { $0.description } })")
-    }
-
-    mutating func placeBet(amount: Int) -> Bool {
-        print("Placing bet: \(amount)")
-        let minBet = 5
-        let maxBet = 100
-
-        guard amount >= minBet, amount <= maxBet else {
-            print("Error: Bet must be between \(minBet) and \(maxBet).")
-            return false
-        }
-        guard amount <= playerBalance else {
-            print("Error: Insufficient balance to place bet.")
-            return false
-        }
-
-        currentBet = amount
-        playerBalance -= amount
-        print("Bet placed successfully. New balance: \(playerBalance)")
-        state = .waitingForBet
-        return true
-    }
-
-    mutating func resolveBet(won: Bool, blackjack: Bool = false) {
-        if won {
-            if blackjack {
-                // 3:2 payout for blackjack
-                playerBalance += Int(Double(currentBet) * 2.5) // 2.5x payout
-                print("Player won with a blackjack! New balance: \(playerBalance)")
-            } else {
-                // Standard 1:1 payout
-                playerBalance += currentBet * 2
-                print("Player won. New balance: \(playerBalance)")
-            }
-        } else {
-            print("Player lost. Balance remains: \(playerBalance)")
-        }
-        currentBet = 0
-        print("resolveBet called with won: \(won), blackjack: \(blackjack)")
-    }
-    
-    func calculateHandTotal(hand: [Card]) -> Int {
-        var total = 0
-        var hasAce = false
-        
-        for card in hand {
-            total += card.value
-            if card.rank == 1 { // Ace
-                hasAce = true
-            }
-        }
-        
-        if hasAce && total + 10 <= 21 {
-            total += 10
-        }
-        print("Hand total calculated: \(total)")
-        return total
-    }
-    
-    mutating func dealInitialCards() {
-        print("Dealing initial cards...")
-        playerHand.removeAll()
-        dealerHand.removeAll()
-
-        if deck.cards.count < 20 { // Threshold for reshuffling
-            print("Low deck count. Reshuffling...")
-            deck.reshuffleDeck()
-        }
-
-        if let playerCard1 = deck.dealCard(),
-           let playerCard2 = deck.dealCard(),
-           let dealerCard1 = deck.dealCard(),
-           let dealerCard2 = deck.dealCard() {
-            playerHand = [playerCard1, playerCard2]
-            dealerHand = [dealerCard1, dealerCard2]
-
-            updateRunningCount(with: playerHand + dealerHand)
-
-                // Check for natural blackjack and handle insurance
-                if calculateHandTotal(hand: playerHand) == 21 {
-                    if calculateHandTotal(hand: dealerHand) == 21 {
-                        print("Push: Both player and dealer have blackjack!")
-                        playerBalance += currentBet // Refund bet
-                    } else {
-                        print("Player wins with a blackjack!")
-                        resolveBet(won: true, blackjack: true)
-                    }
-                    state = .gameOver
-                } else if calculateHandTotal(hand: dealerHand) == 21 {
-                    print("Dealer wins with a blackjack!")
-                    state = .gameOver
-                } else if canTakeInsurance() {
-                    // Offer insurance to the player
-                    print("Dealer's up card is an Ace. Insurance is available.")
-                } else {
-                    state = .playerTurn
-                }
-            } else {
-                print("Error: Not enough cards to deal a new hand.")
-                state = .gameOver
-            }
-        }
-    
-    mutating func playerHit() -> Card? {
-        print("Player chose to hit")
-        guard state == .playerTurn, let card = deck.dealCard() else {
-            print("Invalid action: either not player's turn or no cards available.")
-            return nil
-        }
-        playerHand.append(card)
-        updateRunningCount(with: [card])
-        print("Player hand after hit: \(playerHand.map { $0.description })")
-
-        // Check if the current hand is a bust
-        if calculateHandTotal(hand: playerHand) > 21 {
-            print("Player busted on current hand.")
-            moveToNextHand()
-        }
-        return card
-    }
-
-    // Move to the next hand if the current hand is finished
-    mutating func moveToNextHand() {
-        currentHandIndex += 1
-        if currentHandIndex < playerSplitHands.count {
-            playerHand = playerSplitHands[currentHandIndex]
-            print("Switching to next hand: \(playerHand.map { $0.description })")
-        } else {
-            print("All hands played. Dealer's turn begins.")
-            state = .dealerTurn
-        }
-    }
-    
-    // Helper to check for soft 17
-    func hasSoft17(_ hand: [Card]) -> Bool {
-        let total = calculateHandTotal(hand: hand)
-        let hasAce = hand.contains { $0.rank == 1 }
-        return hasAce && total == 17
-    }
-    
-    
-    mutating func dealerTurn() {
-        print("[Dealer's Turn] Dealer starts with hand: \(dealerHand.map { $0.description })")
-        while calculateHandTotal(hand: dealerHand) < 17 || (calculateHandTotal(hand: dealerHand) == 17 && hasSoft17(dealerHand)) {
-            if let card = deck.dealCard() {
-                dealerHand.append(card)
-                updateRunningCount(with: [card])
-                print("[Dealer's Turn] Dealer drew card: \(card.description)")
-            } else {
-                print("[Dealer's Turn] Error: Deck is empty.")
-                break
-            }
-        }
-
-        // Compare dealer's hand with each player's split hand
-        for (index, hand) in playerSplitHands.enumerated() {
-            let playerTotal = calculateHandTotal(hand: hand)
-            let dealerTotal = calculateHandTotal(hand: dealerHand)
-            print("Final dealer total: \(dealerTotal), player hand \(index + 1) total: \(playerTotal)")
-
-            if dealerTotal > 21 || playerTotal > dealerTotal {
-                resolveBet(won: true)
-            } else if playerTotal < dealerTotal {
-                resolveBet(won: false)
-            } else {
-                print("Push: Player hand \(index + 1) and dealer have the same total!")
-                playerBalance += currentBet // Refund bet for a tie
-            }
-        }
-
-        state = .gameOver
-    }
-    
-    mutating func updateRunningCount(with cards: [Card]) {
-        for card in cards {
-            runningCount += card.hiLoValue
-            dealtCards.append(card)
-            print("Updated running count: \(runningCount)")
-        }
-    }
-    
-    func trueCount() -> Double {
-          let count = deck.remainingDecks > 0 ? Double(runningCount) / deck.remainingDecks : 0
-          print("True count calculated: \(count)")
-          return count
-      }
-    
-    mutating func resetGame() {
-        print("Resetting game")
-        playerHand.removeAll()
-        dealerHand.removeAll()
-        currentBet = 0
-        state = .waitingForBet
-    }
-}
-
-func monteCarloSimulation(
-    deck: Deck,
-    game: BlackjackGame,
-    playerHand: [Card],
-    dealerHand: [Card],
-    iterations: Int = 100000
-) -> (bestCard: String, probabilities: [(String, Double)]) {
-    print("\n[DEBUG] Starting Monte Carlo Simulation")
-    
-    let currentPlayerTotal = game.calculateHandTotal(hand: game.playerHand)
-    let dealerTotal = game.calculateHandTotal(hand: game.dealerHand)
-
-    print("Player total: \(currentPlayerTotal), Dealer total: \(dealerTotal)")
-    
-    // Cache the deck composition for simulation
-    let deckComposition = deck.getCardComposition()
-    print("[DEBUG] Deck composition before simulation: \(deckComposition)")
-    
-    // Track how often each card rank improves the player's chances
-    var cardCounts: [Int: Int] = [:]
-
-    // Simulation loop
-    for _ in 0..<iterations {
-        // Simulate the deck state
-        var simulatedDeck = deck.cards.shuffled()
-        
-        // Draw a card for the player
-        if let drawnCard = simulatedDeck.popLast() {
-            let newPlayerTotal = currentPlayerTotal + drawnCard.value
-            
-            // Check if the new total is favorable (<= 21 and beats dealer)
-            if newPlayerTotal <= 21 && newPlayerTotal >= dealerTotal {
-                cardCounts[drawnCard.rank, default: 0] += 1
-            }
-        }
-    }
-    
-    // Calculate probabilities for each rank
-    let probabilities = (1...13).compactMap { rank -> (String, Double)? in
-        guard let count = cardCounts[rank] else { return nil }
-        let probability = Double(count) / Double(iterations) * 100
-        let rankName = rank > 10 ? ["Jack", "Queen", "King"][rank - 11] : (rank == 1 ? "Ace" : "\(rank)")
-        return (rankName, probability)
-    }
-    .sorted { $0.1 > $1.1 } // Sort by probability descending
-    
-    // Determine the best card
-    let bestCard = probabilities.first?.0 ?? "No favorable card"
-
-    print("[DEBUG] Best card: \(bestCard), Probabilities: \(probabilities)\n")
-    
-    return (bestCard, probabilities)
-}
-
-func asciiTable(headers: [String], rows: [[String]]) -> String {
-    guard !headers.isEmpty else { return "Error: No headers provided." }
-    guard rows.allSatisfy({ $0.count == headers.count }) else { return "Error: Row and header column counts do not match." }
-
-    // Helper function to create a single row with padding
-    func createRow(columns: [String]) -> String {
-        columns.map { " \($0.padding(toLength: 12, withPad: " ", startingAt: 0)) " }
-            .joined(separator: "║")
-    }
-
-    // Build table parts
-    let topBorder = "╔" + Array(repeating: "═══════", count: headers.count).joined(separator: "╦") + "╗"
-    let headerRow = "║" + createRow(columns: headers) + "║"
-    let divider = "╠" + Array(repeating: "════════════", count: headers.count).joined(separator: "╬") + "╣"
-    let dataRows = rows.map { "║" + createRow(columns: $0) + "║" }.joined(separator: "\n")
-    let bottomBorder = "╚" + Array(repeating: "═══════", count: headers.count).joined(separator: "╩") + "╝"
-
-    // Combine all parts
-    return [topBorder, headerRow, divider, dataRows, bottomBorder].joined(separator: "\n")
-}
-
-func asciiTableRow(columns: [String]) -> String {
-    let row = columns.map { column in
-        let paddedColumn = column.padding(toLength: 12, withPad: " ", startingAt: 0)
-        return " \(paddedColumn) "
-    }.joined(separator: "║")
-    return "║" + row + "║"
-}
-
-struct AsciiTableView: View {
-    let headers = ["Rank", "Suit", "Value"]
-    let rows = [
-        ["A", "Spades", "11"],
-        ["10", "Hearts", "10"],
-        ["5", "Clubs", "5"]
+func generateSimplifiedGoldStack(for balance: Int) -> [(row: String, color: Color)] {
+    let denominations = [
+        (value: 50, color: Color.yellow), // $50 chips
+        (value: 25, color: Color.purple), // $25 chips
+        (value: 10, color: Color.green),  // $10 chips
+        (value: 5, color: Color.red)      // $5 chips
     ]
     
+    var remainingBalance = balance
+    var chipRows: [(row: String, color: Color)] = []
+
+    for denomination in denominations {
+        let count = remainingBalance / denomination.value
+        remainingBalance %= denomination.value
+        
+        for _ in 0..<count {
+            chipRows.append((row: "  █░█", color: denomination.color))
+        }
+    }
+
+    return chipRows
+}
+
+struct ChipRowView: View {
+    let row: String
+    let color: Color
+
     var body: some View {
-        Text(asciiTable(headers: headers, rows: rows))
-            .font(.system(size: 14, weight: .bold, design: .monospaced))
-            .foregroundColor(.red)
-            .padding()
-            .background(Color.black.edgesIgnoringSafeArea(.all))
+        Text(row)
+            .font(.system(size: 16, weight: .bold, design: .monospaced))
+            .foregroundColor(color)
+            .multilineTextAlignment(.center)
     }
 }
 
-/// Helper function to render a single card as ASCII with Unicode suit symbols
-func renderCard(_ card: Card?) -> Text {
+
+
+//struct GoldStackView: View {
+//    let balance: Int
+//
+//    var body: some View {
+//        let chipRows = generateSimplifiedGoldStack(for: balance)
+//        
+//        VStack(spacing: 10) {
+//            ForEach(chipRows.indices, id: \.self) { index in
+//                ChipRowView(row: chipRows[index].row, color: chipRows[index].color)
+//            }
+//
+//            Text("💰 Balance: $\(balance)")
+//                .font(.system(size: 14, weight: .bold, design: .monospaced))
+//                .foregroundColor(.green)
+//        }
+//        .padding()
+//        .background(Color.black.edgesIgnoringSafeArea(.all))
+//    }
+//}
+
+func renderCard(_ card: Card?, hide: Bool = false) -> String {
+    if hide {
+        return """
+        ╭──────╮
+        │░░░░░░│
+        │░░░░░░│
+        │░ ?? ░│
+        │░░░░░░│
+        │░░░░░░│
+        ╰──────╯
+        """
+    }
+
     guard let card = card else {
-        // Placeholder for hidden card
-        return Text("""
-        ╔════╗
-        ║    ║
-        ║ ?? ║
-        ║    ║
-        ╚════╝
-        """).foregroundColor(.white)
+        return "Invalid Card"
     }
-    
+
     let rank = card.rank == 1 ? "A" : (card.rank > 10 ? String(card.description.prefix(1)) : "\(card.rank)")
-    let suitSymbol: String
-    let suitColor: Color
-    switch card.suit {
-    case .hearts:
-        suitSymbol = "♥"
-        suitColor = .red
-    case .diamonds:
-        suitSymbol = "♦"
-        suitColor = .red
-    case .clubs:
-        suitSymbol = "♣"
-        suitColor = .black
-    case .spades:
-        suitSymbol = "♠"
-        suitColor = .black
-    }
-    
-    return Text("""
-    ╔════╗
-    ║\(rank)   ║
-    ║  \(suitSymbol) ║
-    ║   \(rank)║
-    ╚════╝
-    """).foregroundColor(suitColor)
+    let suitSymbols: [Suit: String] = [
+        .hearts: "♥",
+        .diamonds: "♦",
+        .clubs: "♣",
+        .spades: "♠"
+    ]
+    let suit = suitSymbols[card.suit] ?? "?"
+
+    // Ensure fixed-width lines for alignment
+    return """
+    ╭──────╮
+    │\(padCardLine("\(rank)    ", width: 6))│
+    │      │
+    │   \(suit)  │
+    │      │
+    │ \(padCardLine("   \(rank)", width: 5))│
+    ╰──────╯
+    """
 }
 
-func convertRankNameToValue(_ name: String) -> Int {
-    switch name {
-    case "Ace": return 1
-    case "Jack": return 11
-    case "Queen": return 12
-    case "King": return 13
-    default: return Int(name) ?? 0
-    }
-}
+func generateChipLayout(chipStack: [(amount: Int, color: Color)]) -> [[(amount: Int, color: Color)]] {
+    var rows: [[(amount: Int, color: Color)]] = []
+    var currentIndex = 0
 
-// Helper function to render multiple cards horizontally
-func renderHandHorizontally(_ hand: [Card], hideFirstCard: Bool = false) -> String {
-    let renderedCards = hand.enumerated().map { index, card in
-        if index == 0 && hideFirstCard {
-            // Hidden card representation
-            return """
-            ╔════╗
-            ║    ║
-            ║ ?? ║
-            ║    ║
-            ╚════╝
-            """
+    // Pyramid Rows
+    let rowCapacities = [3, 2, 1] // Reverse the order: top row (1), middle row (2), bottom row (3)
+    for rowCapacity in rowCapacities {
+        if currentIndex < chipStack.count {
+            let row = Array(chipStack[currentIndex..<min(currentIndex + rowCapacity, chipStack.count)])
+            rows.insert(row, at: 0) // Insert each row at the beginning to flip the pyramid
+            currentIndex += rowCapacity
         } else {
-            let rank = card.rank == 1 ? "A" : (card.rank > 10 ? String(card.description.prefix(1)) : "\(card.rank)")
-            let suitSymbol: String
-            switch card.suit {
-            case .hearts: suitSymbol = "♥"
-            case .diamonds: suitSymbol = "♦"
-            case .clubs: suitSymbol = "♣"
-            case .spades: suitSymbol = "♠"
-            }
-            return """
-            ╔════╗
-            ║\(rank)   ║
-            ║  \(suitSymbol) ║
-            ║   \(rank)║
-            ╚════╝
-            """
+            break
         }
     }
 
-    // Split each card's string into rows and combine them horizontally
-    let rows = renderedCards.map { $0.split(separator: "\n") }
-    guard let firstCardRows = rows.first else { return "" }
+    // ZStack Overflow (top-to-bottom for correct alignment)
+      if currentIndex < chipStack.count {
+          let remainingChips = Array(chipStack[currentIndex..<chipStack.count])
+          rows.append(remainingChips) // Add remaining chips as the last row (ZStack)
+      }
 
-    return (0..<firstCardRows.count).map { rowIndex in
-        rows.map { $0[rowIndex] }.joined(separator: " ")
-    }.joined(separator: "\n")
-}
+      return rows
+  }
 
-func generateGoldStack(for balance: Int) -> String {
-    let goldPerRow = 10 // Each row represents $10
-    let rows = balance / goldPerRow
-    var stack = ""
-
-    for _ in 0..<rows {
-        stack += "  █░█░\n"
-    }
-
-    return stack.isEmpty ? "No gold left!" : stack
-}
-
-struct GoldStackView: View {
-    let balance: Int
-
-    var body: some View {
-        VStack {
-            Text("Player's Gold Stack")
-                .font(.headline)
-                .foregroundColor(.yellow)
-
-            Text(generateGoldStack(for: balance))
-                .font(.system(size: 16, weight: .bold, design: .monospaced))
-                .foregroundColor(.yellow)
-                .multilineTextAlignment(.center)
-                .padding()
-
-            Text("💰 Balance: $\(balance)")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(.green)
-        }
-        .padding()
-        .background(Color.black.edgesIgnoringSafeArea(.all))
-    }
-}
-
-// Refined ASCII-styled button with larger size and title-like appearance
-struct AsciiButton: View {
-    let label: String
+struct ChipButton: View {
+    let amount: Int
+    let color: Color
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text("""
-            ╔═════╗
-            ║\(label)  ║
-            ╚═════╝
-            """)
-            .font(.system(size: 14, weight: .bold, design: .monospaced)) // Larger font
-            .foregroundColor(.white)
+            ZStack {
+                // Outer Solid Circle (Background)
+                Circle()
+                    .fill(color.opacity(0.8))
+                    .frame(width: 60, height: 60)
+
+                // Outer Dotted Stroke
+                Circle()
+                    .strokeBorder(style: StrokeStyle(lineWidth: 5, dash: [15, 5])) // Dotted stroke
+                    .foregroundColor(.white)
+                    .frame(width: 54, height: 54)
+
+                // Inner Solid Circle
+                Circle()
+                    .fill(color.opacity(0.8))
+                    .frame(width: 48, height: 48)
+
+
+                // Chip Value Text
+                Text("$\(amount)")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+            }
+            .shadow(color: color.opacity(0.5), radius: 3, x: 0, y: 2)
         }
-        .buttonStyle(PlainButtonStyle()) // Ensure plain styling
     }
 }
-
 
 struct ContentView: View {
-    @State private var game = BlackjackGame(decks: 1)
-    @State private var showMonteCarloResults = false
-    @State private var monteCarloResults: (bestCard: String, probabilities: [(String, Double)])?
-    @State private var showBasicStrategyTable = false
+    @StateObject private var game = BlackjackGame(decks: 1)
+    @State private var dealtCardIndex: Int = 0 // Track how many cards have been dealt
+    @State private var cardOpacity: [Double] = Array(repeating: 0.0, count: 10)
+    @State private var cardOffset: [CGSize] = Array(repeating: CGSize(width: 0, height: -500), count: 10)
+    @State private var showPlayerTotal: Bool = false
+    @State private var showDealerTotal: Bool = false
+    @State private var goldStackOpacity: Double = 1.0
+    @State private var currentBet: Int = 0 // Current bet amount
+    @State private var chipStack: [(amount: Int, color: Color)] = [] // Chips in the stack
+    @State private var cardScale: [CGFloat] = Array(repeating: 0.0, count: 10) // Scale for card flip
+    @State private var winnings: Int = 0 // Amount won or lost in the round
+    @State private var showWinnings: Bool = false // Whether to display winnings prominently
+    @State private var chipStackOffset: CGSize = .zero // Animation offset for chips
+    
 
+    
     var body: some View {
-        VStack(spacing: 20) {
-            // Header
-            Text("""
-            ╔══════════════════════════════════╗
-            ║          BLACKJACK TRAINER       ║
-            ╚══════════════════════════════════╝
-            """)
-            .font(.system(size: 16, weight: .bold, design: .monospaced))
-            .foregroundColor(.white)
-
-            // Game State
-            Text("🎲 \(game.state.rawValue.uppercased()) 🎲")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(.yellow)
-
-            Divider().background(Color.gray)
-
-            // Dealer and Player Hands
-            HStack(alignment: .top, spacing: 20) {
-                // Dealer Section
-                VStack(alignment: .center, spacing: 10) {
-                    Text("DEALER")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(.red)
-                    Text(renderHandHorizontally(game.dealerHand, hideFirstCard: game.state != .gameOver))
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                    Text("Total: \(game.state == .gameOver ? "\(game.calculateHandTotal(hand: game.dealerHand))" : "Hidden")")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.blue)
-                }
-
-                Divider().frame(height: 100).background(Color.gray)
-
-                // Player Section
-                VStack(alignment: .center, spacing: 10) {
-                    Text("PLAYER")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(.green)
-                    ForEach(0..<max(1, game.playerSplitHands.count), id: \.self) { index in
-                        let hand = game.playerSplitHands.isEmpty ? game.playerHand : game.playerSplitHands[index]
-                        Text(renderHandHorizontally(hand))
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundColor(index == game.currentHandIndex ? .green : .white)
-                        Text("Total: \(game.calculateHandTotal(hand: hand))")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundColor(index == game.currentHandIndex ? .green : .white)
-                    }
-                }
-            }
-
-            Divider().background(Color.gray)
-            
-            // Strategy Tip Section
-                    if game.state == .playerTurn {
-                        let hint = game.strategyHint(
-                            for: game.playerHand,
-                            dealerUpCard: game.dealerHand.first
-                        )
-                        Text("📊 Strategy Tip: \(hint)")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundColor(.yellow)
-                            .padding()
-                            .background(Color.black.opacity(0.8))
-                            .cornerRadius(8)
-                    }
-
-            // Action Buttons
-            VStack(spacing: 10) {
-                if game.state == .waitingForBet {
-                    Text("💵 Place Your Bet 💵")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(.yellow)
-                    HStack(spacing: 10) {
-                        ForEach([5, 10, 20, 50], id: \.self) { amount in
-                            AsciiButton(label: "$\(amount)") {
-                                if game.placeBet(amount: amount) {
-                                    game.dealInitialCards()
-                                    monteCarloResults = monteCarloSimulation(
-                                        deck: game.deck,
-                                        game: game,
-                                        playerHand: game.playerHand,
-                                        dealerHand: game.dealerHand
-                                    )
-                                    game.state = .playerTurn
+//        ZStack {
+//            // Background Image
+//            Image("FeltTable") // Replace with your image asset name
+//                .resizable()
+//                .brightness(-0.1)
+//                .blur(radius: 3)
+//                .overlay(
+//                    LinearGradient(
+//                        gradient: Gradient(colors: [Color.black.opacity(0.2), Color.clear, Color.black.opacity(0.2)]),
+//                        startPoint: .top,
+//                        endPoint: .bottom
+//                    )
+//                    )
+//                .scaledToFill() // Ensures the image fills the entire view
+//                .ignoresSafeArea() // Makes the background extend beyond safe areas
+            VStack(spacing: 20) {
+                
+                
+                HStack(alignment: .top, spacing: 20){
+                    VStack {
+                        Text("Dealer's Hand")
+                            .font(.headline)
+                            .foregroundColor(.red)
+                        HStack(spacing: 100) {
+                            // Dealer's cards
+                            HStack {
+                                ForEach(game.dealerHand.indices, id: \.self) { index in
+                                    Text(renderCard(game.dealerHand[safe: index], hide: index == 1 && game.state != .gameOver))
+                                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.black)
+                                        .padding(-4)
+                                        .padding(.vertical, -5)
+                                        .background(Color.white) // Card background
+                                        .cornerRadius(3)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(Color.black.opacity(0.6), lineWidth: 1.5) // Subtle border
+                                        )
+                                        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                                        .fixedSize(horizontal: true, vertical: true) // Ensure proper size
+                                        .opacity(cardOpacity[index]) // Apply opacity
+                                        .offset(cardOffset[index])   // Apply offset
+                                        .animation(.easeOut(duration: 0.5), value: cardOpacity[index]) // Apply animation
                                 }
                             }
+                            
+                        }
+                        Text("Total: \(game.state != .gameOver ? "Hidden" : "\(game.calculateHandTotal(hand: game.dealerHand))")")
+                            .font(.headline)
+                            .foregroundColor(.red)
+                        
+                        if showDealerTotal {
+                            Text("Total: \(game.state == .gameOver ? "\(game.calculateHandTotal(hand: game.dealerHand))" : "Hidden")")
+                                .font(.headline)
+                                .foregroundColor(.blue)
+                                .opacity(showDealerTotal ? 1.0 : 0.0)
+                                .animation(.easeIn(duration: 0.5), value: showDealerTotal)
                         }
                     }
-                } else if game.state == .playerTurn {
-                    HStack(spacing: 10) {
-                        AsciiButton(label: "HIT") {
-                            if let _ = game.playerHit(), game.calculateHandTotal(hand: game.playerHand) > 21 {
-                                monteCarloResults = monteCarloSimulation(
-                                    deck: game.deck,
-                                    game: game,
-                                    playerHand: game.playerHand,
-                                    dealerHand: game.dealerHand
-                                )
-                                game.state = .gameOver
-                                game.resolveBet(won: false)
+                    
+                    
+                    // Deck symbol
+                    Text("""
+            ╭──────╮╮
+            │░░░░░░││
+            │░░░░░░││
+            │░ ?? ░││
+            │░░░░░░││
+            │░░░░░░││
+            ╰──────╯╯
+            """)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(.red)
+                    .padding(-3)
+                    .padding(.vertical, -5)
+                    .background(Color.white) // Card background
+                    .cornerRadius(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.black.opacity(0.2), lineWidth: 2) // Subtle border
+                    )
+                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                    .fixedSize(horizontal: true, vertical: true) // Ensure proper size
+                }
+                // Dealer and Player Hands
+                VStack(spacing: 20) {
+                    // Winnings Display
+                    if showWinnings {
+                        VStack(spacing: 0) {
+                            // Top border of the box
+                            Text("""
+                        ╭──────────────────────╮
+                        """)
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                            
+                            // Content inside the box
+                            Text(winnings > 0 ? "You Won $\(winnings)!" : "BUST!")
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(winnings > 0 ? .green : .red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 2)
+                            
+                            // Bottom border of the box
+                            Text("""
+                        ╰──────────────────────╯
+                        """)
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        }
+                        .padding()
+                        .background(Color.black.opacity(0.8))
+                        .cornerRadius(10)
+                        .transition(.scale)
+                        .animation(.easeInOut(duration: 3.0), value: showWinnings)
+                    }
+                    
+                    Divider()
+                    
+                    // Player Section
+                    VStack(spacing: 20) {
+                        Text("Player's Hand")
+                            .font(.headline)
+                            .foregroundColor(.green)
+                        
+                        ForEach(game.playerHands.indices, id: \.self) { handIndex in
+                            VStack {
+                                // Show total for each hand
+                                
+                                
+                                HStack {
+                                    ForEach(game.playerHands[handIndex].indices, id: \.self) { cardIndex in
+                                        Text(renderCard(game.playerHands[handIndex][safe: cardIndex]))
+                                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.red)
+                                            .padding(-4)
+                                            .padding(.vertical, -5)
+                                            .background(Color.white) // Card background
+                                            .cornerRadius(3)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 4)
+                                                    .stroke(Color.red.opacity(0.6), lineWidth: 1.5) // Subtle border
+                                            )
+                                            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                                            .fixedSize(horizontal: true, vertical: true) // Ensure proper size
+                                            .opacity(cardOpacity[cardIndex + handIndex * 5]) // Adjust for each hand
+                                            .offset(cardOffset[cardIndex + handIndex * 5])   // Adjust for each hand
+                                            .animation(.easeOut(duration: 0.5), value: cardOpacity[cardIndex + handIndex * 5])
+                                    }
+                                    
+                               
+                                    
+                                    // Generate chip layout
+                                    let chipRows = generateChipLayout(chipStack: chipStack)
+                                    
+                                    VStack(spacing: 5) {
+                                        // Render pyramid rows
+                                        ForEach(0..<chipRows.count, id: \.self) { rowIndex in
+                                            HStack(spacing: 5) {
+                                                ForEach(0..<chipRows[rowIndex].count, id: \.self) { chipIndex in
+                                                    let chip = chipRows[rowIndex][chipIndex]
+                                                    Text("█░█")
+                                                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                                                        .foregroundColor(chip.color)
+                                                        .padding(2)
+                                                        .offset(chipStackOffset) // Optional animation offset
+                                                        .animation(.easeOut(duration: 0.5), value: chipStackOffset)
+                                                }
+                                            }
+                                            .opacity(rowIndex < 3 ? 1.0 : 0.8) // Pyramid rows are fully visible, ZStack rows have slight transparency
+                                        }
+                                        // Add overflow visualization (ZStack for remaining chips)
+                                        if chipRows.count > 3 {
+                                            ZStack {
+                                                ForEach(chipRows[3].indices.reversed(), id: \.self) { overflowIndex in
+                                                    let chip = chipRows[3][overflowIndex]
+                                                    Text("█░█")
+                                                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                                                        .foregroundColor(chip.color)
+                                                        .padding(2)
+                                                        .offset(CGSize(width: 0, height: CGFloat(-overflowIndex * 10))) // Flip overflow from bottom to top
+                                                        .animation(.easeOut(duration: 0.5), value: chipStackOffset)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if showPlayerTotal {
+                                        Text("Total: \(game.calculateHandTotal(hand: game.playerHands[handIndex]))")
+                                            .font(.headline)
+                                            .foregroundColor(.green)
+                                    }
+                                    
+                                }
+                                
+                                
+                                
+                                
+                                
                             }
                         }
-                        AsciiButton(label: "STAND") {
-                            game.dealerTurn()
-                        }
-                    }
-                } else if game.state == .gameOver {
-                    AsciiButton(label: "Play Again") {
-                        game.resetGame()
-                        game.state = .waitingForBet
+                        
                     }
                 }
-            }
-
-            Divider().background(Color.gray)
-
-            // Gold Stack and Stats
-            VStack(spacing: 10) {
-                GoldStackView(balance: game.playerBalance)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Game Stats")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(.yellow)
-                    Text("Running Count: \(game.runningCount)")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.green)
-                    Text("True Count: \(String(format: "%.2f", game.trueCount()))")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.green)
-                }
-            }
-
-            Spacer()
-        }
-        .padding()
-        .background(Color.black.edgesIgnoringSafeArea(.all))
-    }
-}
-
-struct BasicStrategyTableView: View {
-    var body: some View {
-        ScrollView {
-            Text(BlackjackGame.basicStrategyTable())
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
                 .padding()
-                .background(Color.black.edgesIgnoringSafeArea(.all))
-        }
-    }
-}
-
-
-
-struct TestChipStackView: View {
-    var body: some View {
-        VStack {
-            // Horizontal chips
-            Text("══ ══ ══ ══")
-                .font(.system(size: 20, weight: .bold, design: .monospaced))
-                .foregroundColor(.red)
-
-            // Vertical striped chips
-            Text("""
-            █░█░
-            █░█░
-            █░█░
-            """)
-            .font(.system(size: 16, weight: .bold, design: .monospaced))
-            .foregroundColor(.blue)
-
-            // Example caption
-            Text("Example Chip Stack")
-                .foregroundColor(.white)
-                .font(.caption)
-        }
-        .padding()
-        .background(Color.black.edgesIgnoringSafeArea(.all))
-    }
-}
-
-
-// MARK: - Deck Viewer
-struct DeckViewer: View {
-    let cardComposition: [Int: Int]
-
-    var body: some View {
-        VStack {
-            Text("📋 Remaining Deck Composition 📋")
-                .font(.headline)
-                .padding()
-
-            List {
-                ForEach(1...13, id: \.self) { rank in
-                    let rankString: String = {
-                        switch rank {
-                        case 1: return "Ace"
-                        case 11: return "Jack"
-                        case 12: return "Queen"
-                        case 13: return "King"
-                        default: return "\(rank)"
+                
+                
+                // Gold Stack and Balance
+                //            VStack {
+                //                GoldStackView(balance: game.playerBalance)
+                //                    .opacity(goldStackOpacity)
+                //                    .animation(.easeInOut(duration: 0.5), value: goldStackOpacity)
+                //            }
+                
+                Divider()
+                // Action Buttons
+                HStack(spacing: 5) {
+                    
+                    if game.state == .waitingForBet {
+                        VStack(spacing: 10) {
+                            // Display Balance
+                            Text("💰 Balance: $\(game.playerBalance)")
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(.green)
+                            
+                            // Strategy Hint Placeholder
+                            Text("""
+                        Current Bet: $\(currentBet)
+                        """)
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(.yellow)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                            .cornerRadius(10)
+                            
+                            // Betting Buttons
+                            HStack(spacing: 10) {
+                                ForEach([5, 10, 25, 50], id: \.self) { amount in
+                                    let boxColor: Color = amount == 50 ? .gold : amount == 25 ? .purple : amount == 10 ? .green : .red
+                                    
+                                    ChipButton(amount: amount, color: boxColor) {
+                                        currentBet += amount
+                                        chipStack.append((amount: amount, color: boxColor))
+                                    }
+                                }
+                            }
+                            
+                            // Action Buttons
+                            HStack(spacing: 20) {
+                                // Clear Bet Button
+                                Button(action: {
+                                    currentBet = 0
+                                    chipStack.removeAll()
+                                }) {
+                                    Text("""
+                                ╭───────────╮
+                                │ Clear Bet │
+                                ╰───────────╯
+                                """)
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .padding()
+                                    
+                                }
+                                
+                                // Deal Button
+                                Button(action: {
+                                    if currentBet > 0 {
+                                        game.placeBet(amount: currentBet)
+                                        dealInitialCards()
+                                    }
+                                }) {
+                                    Text("""
+                                ╭──────────╮
+                                │   DEAL   │
+                                ╰──────────╯
+                                """)
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundColor(currentBet > 0 ? Color.green : Color.white)
+                                    .padding()
+                                }
+                                .disabled(currentBet == 0)
+                            }
                         }
-                    }()
+                        .padding()
+                        .cornerRadius(10)
+                    } else if game.state == .playerTurn {
+                        VStack(spacing: 10) {
+                            Text("💰 Balance: $\(game.playerBalance)")
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(.green)
+                            Text("📊 Strategy Hint: \(game.strategyHint(for: game.playerHand, dealerUpCard: game.dealerHand.first))")
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(.yellow)
+                                .padding()
+                            
+                            HStack(spacing: 20) {
+                                // Hit Button
+                                Button(action: {
+                                    dealNextPlayerCard()
+                                }) {
+                                    Text("""
+                                ╭──────────╮
+                                │   HIT    │
+                                ╰──────────╯
+                                """)
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .background(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [Color.green.opacity(0.8), Color.green.opacity(0.5)]),
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .foregroundColor(.white)
+                                }
+                                .padding()
+                                
+                                
+                                // Stand Button
+                                Button(action: {
+                                    revealDealerTotal()
+                                    game.resolveGame()
+                                }) {
+                                    Text("""
+                                ╭──────────╮
+                                │   STAND  │
+                                ╰──────────╯
+                                """)
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                }
+                                .padding()
+                            }
+                        }
+                    } else if game.state == .gameOver {
+                        Button(action: {
+                            resetGame()
+                        }) {
+                            Text("Play Again")
+                                .padding()
+                                .background(Color.orange)
+                                .cornerRadius(8)
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+                
+                
+            }
+            .padding()
+        }
+//    }
 
-                    Text("\(rankString): \(cardComposition[rank, default: 0]) cards remaining")
+    // MARK: - Game Logic with Animations
+
+    private func dealInitialCards() {
+        game.dealInitialCards() // Prepare initial cards for player and dealer
+        game.currentHandIndex = 0 // Ensure index is reset
+        showPlayerTotal = false
+        showDealerTotal = false
+
+        let delay = 1.0 // Delay between each card being dealt
+
+        // Define the sequence of dealing
+        let dealSequence = [
+            ("player", 0),  // Player 1
+            ("dealer", 0),  // Dealer 1
+            ("player", 1),  // Player 2
+            ("dealer", 1)   // Dealer 2
+        ]
+
+        // Animate each card in the sequence
+        for (index, deal) in dealSequence.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (delay * Double(index))) {
+                if deal.0 == "player" {
+                    // Player card animation
+                    withAnimation(.easeOut(duration: 0.5)) {
+                        cardOpacity[deal.1] = 1.0 // Fade in
+                        cardOffset[deal.1] = .zero // Slide into position
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            cardScale[deal.1] = 1.0 // Flip effect
+                        }
+                    }
+                } else if deal.0 == "dealer" {
+                    // Dealer card animation
+                    withAnimation(.easeOut(duration: 0.5)) {
+                        cardOpacity[deal.1 + 5] = 1.0 // Fade in
+                        cardOffset[deal.1 + 5] = .zero // Slide into position
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            cardScale[deal.1 + 5] = (deal.1 == 0 || showDealerTotal) ? 1.0 : 0.0 // Flip only first card or reveal hidden card when ready
+                        }
+                    }
+                }
+
+                // Show totals once all cards are dealt
+                if index == dealSequence.count - 1 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        showPlayerTotal = true
+                        if game.state == .gameOver {
+                            showDealerTotal = true
+                        }
+                    }
                 }
             }
         }
     }
+
+    private func dealNextPlayerCard() {
+        if let newCard = game.deck.dealCard() {
+            game.playerHand.append(newCard)
+            let index = game.playerHand.count - 1
+
+            // Animate new card from the deck to the player's hand
+            cardOpacity[index] = 0.0
+            cardOffset[index] = CGSize(width: 100, height: -200) // Starting near the deck
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    cardOpacity[index] = 1.0
+                    cardOffset[index] = .zero // Move to the hand position
+                }
+            }
+        }
+    }
+
+    private func revealDealerTotal() {
+        showDealerTotal = true
+
+        // Calculate winnings
+        let dealerTotal = game.calculateHandTotal(hand: game.dealerHand)
+        let playerTotal = game.calculateHandTotal(hand: game.playerHand)
+
+        if playerTotal > dealerTotal && playerTotal <= 21 || dealerTotal > 21 {
+            winnings = currentBet * 2 // Double the bet on a win
+            game.playerBalance += winnings
+        } else if playerTotal == dealerTotal {
+            winnings = currentBet // Return the bet on a tie
+            game.playerBalance += winnings
+        } else {
+            winnings = 0 // Lose the bet
+            
+            // Animate chips to the dealer
+              DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                  withAnimation(.easeInOut(duration: 0.5)) {
+                      chipStackOffset = CGSize(width: 100, height: -200) // Adjust as needed for dealer
+                  }
+              }
+        }
+
+        // Show the winnings prominently
+        showWinnings = true
+
+        // Animate chips back to the player
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                chipStackOffset = CGSize(width: -100, height: 200) // Adjust as needed
+            }
+        }
+
+        // Reset chips and hide winnings after the animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                chipStack.removeAll()
+                chipStackOffset = .zero
+                showWinnings = false
+            }
+        }
+    }
+
+    private func resetGame() {
+        game.resetGame()
+        cardOpacity = Array(repeating: 0.0, count: 10)
+        cardOffset = Array(repeating: CGSize(width: 0, height: -500), count: 10)
+        showPlayerTotal = false
+        showDealerTotal = false
+    }
+}
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
+
+extension Color {
+    static let gold = Color(red: 1.0, green: 0.84, blue: 0.0) // Gold RGB values
 }
